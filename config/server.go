@@ -106,6 +106,7 @@ func InitSite(cfg SiteConfig) error {
     }
 
     r.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("X-Powered-By", "Goinx")
         if cfg.BackendRoute != "" && strings.HasPrefix(c.Request.URL.Path, cfg.BackendRoute) {
             c.Next()
             return
