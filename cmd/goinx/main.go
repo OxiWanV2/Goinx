@@ -10,15 +10,19 @@ func main() {
 	var cliMode bool
 	flag.BoolVar(&cliMode, "cli", false, "Mode console interactif")
 	flag.Parse()
+
 	log.Println("Initialisation de Goinx...")
+
 	err := config.SetupGoinx()
 	if err != nil {
 		log.Fatalf("Erreur lors du setup : %v", err)
 	}
+
 	if cliMode {
 		config.StartCLI()
 		return
 	}
+
 	sites, err := config.LoadSitesConfigWithNames()
 	if err != nil {
 		log.Fatalf("Erreur chargement configuration : %v", err)
@@ -26,6 +30,7 @@ func main() {
 	if len(sites) == 0 {
 		log.Fatal("Aucun site actif trouvé, arrêt.")
 	}
+
 	var configs []config.SiteConfig
 	for _, s := range sites {
 		configs = append(configs, s.Config)
@@ -34,6 +39,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Validation des configurations échouée : %v", err)
 	}
+
 	for _, s := range sites {
 		err := config.InitSite(s.Config)
 		if err != nil {
@@ -41,8 +47,10 @@ func main() {
 			return
 		}
 	}
+
 	go config.StartMainListener()
 	go config.LaunchHttpsServers()
+
 	log.Printf("Tous les serveurs démarrés. Ctrl+C pour quitter.")
 	select {}
 }

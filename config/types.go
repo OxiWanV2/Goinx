@@ -10,6 +10,10 @@ type SiteConfig struct {
 	UseLetsEncrypt bool // Permet d'utiliser letsencrypt
     SSLCertFile  string // Fichier de certificat SSL
     SSLKeyFile   string // Fichier de clef SSL
+    BackendRoute string
+    Backend       string // Path vers le backend
+    BackendFile   string // Nom du fichier principal du backend
+    BackendInternalPort int // Port pointer par le backend
 }
 
 type VuejsRewrite struct {
