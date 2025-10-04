@@ -47,6 +47,18 @@ func ParseConf(path string) (SiteConfig, error) {
             if len(parts) >= 2 {
                 config.ErrorPagesDir = parts[1]
             }
+		case "ssl_enabled":
+			if len(parts) >= 2 {
+				config.SSLEnabled = (parts[1] == "true" || parts[1] == "1")
+			}
+		case "ssl_cert_file":
+			if len(parts) >= 2 {
+				config.SSLCertFile = parts[1]
+			}
+		case "ssl_key_file":
+			if len(parts) >= 2 {
+				config.SSLKeyFile = parts[1]
+			}
         }
     }
     if err := scanner.Err(); err != nil {

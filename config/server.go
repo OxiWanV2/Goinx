@@ -54,6 +54,19 @@ func StartServer(siteName string, config SiteConfig) error {
         })
     }
 
+	if config.SSLEnabled {
+		if _, err := os.Stat(config.SSLCertFile); err != nil {
+			return fmt.Errorf("ssl_cert_file introuvable ou inaccessible: %v", err)
+		}
+		if _, err := os.Stat(config.SSLKeyFile); err != nil {
+			return fmt.Errorf("ssl_key_file introuvable ou inaccessible: %v", err)
+		}
+
+		err = srv.ListenAndServeTLS(config.SSLCertFile, config.SSLKeyFile)
+	} else {
+		err = srv.ListenAndServe()
+	}
+
     srv := &http.Server{
         Addr:    ":" + config.Listen,
         Handler: r,
