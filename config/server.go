@@ -1,261 +1,297 @@
 package config
 
 import (
-    "context"
-    "fmt"
-    "log"
-    "net"
-    "net/http"
-    "os"
-    "path/filepath"
-    "strings"
-    "sync"
-    "time"
+	"context"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
-    "github.com/gin-gonic/gin"
-    "golang.org/x/crypto/acme/autocert"
-)
-
-var (
-    activeServersMu sync.Mutex
-    activeServers   = make(map[string]*SiteServer)
+	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 type SiteServer struct {
-    Config SiteConfig
-
-    httpServer *http.Server
-    running    bool
-    mu         sync.Mutex
+	Config     SiteConfig
+	httpServer *http.Server
+	running    bool
+	mu         sync.Mutex
 }
 
-func dnsPointsToLocalIP(domain string) bool {
-    ips, err := net.LookupIP(domain)
-    if err != nil {
-        log.Printf("Échec résolution DNS %s : %v", domain, err)
-        return false
-    }
-    for _, ip := range ips {
-        if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() {
-            return true
-        }
-    }
-    return false
+type Site struct {
+	Config  SiteConfig
+	Router  *gin.Engine
+	Running bool
+	Mutex   sync.Mutex
 }
 
-func isSslOnPort80(config SiteConfig) bool {
-    return config.SSLEnabled && config.Listen == "80"
+var (
+	sitesMu        sync.Mutex
+	sites          = make(map[string]*Site)
+	autocertMgrsMu sync.Mutex
+	autocertMgrs   = make(map[string]*autocert.Manager)
+	activeServersMu sync.Mutex
+	activeServers   = make(map[string]*SiteServer)
+)
+
+func domainPointsToServerIP(domain string) bool {
+	domainIPs, err := net.LookupIP(domain)
+	if err != nil {
+		log.Printf("DNS lookup fail for %s: %v", domain, err)
+		return false
+	}
+
+	localIPs := make(map[string]bool)
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		log.Printf("Erreur récupération interfaces réseau: %v", err)
+		return false
+	}
+	for _, i := range ifaces {
+		addrs, err := i.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip != nil {
+				localIPs[ip.String()] = true
+			}
+		}
+	}
+
+	for _, ip := range domainIPs {
+		if localIPs[ip.String()] {
+			return true
+		}
+	}
+
+	return false
 }
 
-func StartServer(siteName string, config SiteConfig) error {
-    activeServersMu.Lock()
-    defer activeServersMu.Unlock()
+func InitSite(cfg SiteConfig) error {
+	r := gin.New()
+	r.Use(gin.Recovery())
 
-    if srv, exists := activeServers[siteName]; exists && srv.running {
-        return fmt.Errorf("site %s serveur déjà démarré", siteName)
-    }
+	r.Static("/", cfg.Root)
 
-    gin.SetMode(gin.ReleaseMode)
-    r := gin.Default()
+	if cfg.VuejsRewrite.Path != "" && cfg.VuejsRewrite.Fallback != "" {
+		r.NoRoute(func(c *gin.Context) {
+			if strings.HasPrefix(c.Request.URL.Path, cfg.VuejsRewrite.Path) {
+				c.File(filepath.Join(cfg.Root, cfg.VuejsRewrite.Fallback))
+			} else {
+				ServeErrorPage(c, http.StatusNotFound, cfg)
+				c.Abort()
+			}
+		})
+	} else {
+		r.NoRoute(func(c *gin.Context) {
+			ServeErrorPage(c, http.StatusNotFound, cfg)
+			c.Abort()
+		})
+	}
 
-    r.Static("/", config.Root)
+	site := &Site{
+		Config: cfg,
+		Router: r,
+	}
 
-    if config.VuejsRewrite.Path != "" && config.VuejsRewrite.Fallback != "" {
-        r.NoRoute(func(c *gin.Context) {
-            if strings.HasPrefix(c.Request.URL.Path, config.VuejsRewrite.Path) {
-                c.File(filepath.Join(config.Root, config.VuejsRewrite.Fallback))
-            } else {
-                ServeErrorPage(c, http.StatusNotFound, config)
-                c.Abort()
-            }
-        })
-    } else {
-        r.NoRoute(func(c *gin.Context) {
-            ServeErrorPage(c, http.StatusNotFound, config)
-            c.Abort()
-        })
-    }
+	sitesMu.Lock()
+	sites[cfg.ServerName] = site
+	sitesMu.Unlock()
 
-    listenPort := config.Listen
-    srv := &http.Server{
-        Addr:    ":" + listenPort,
-        Handler: r,
-    }
+	if cfg.UseLetsEncrypt {
+		setupLetsEncrypt(site)
+	}
 
-    // Gestion Let’s Encrypt
-    if config.UseLetsEncrypt {
-        if !dnsPointsToLocalIP(config.ServerName) {
-            log.Printf("Le domaine %s ne pointe pas vers cette IP. Ignorer Let’s Encrypt pour %s.", config.ServerName, siteName)
-            // Fallback au serveur classique (HTTP ou SSL classique)
-            return startClassicServer(siteName, config, srv, r)
-        }
-
-        m := &autocert.Manager{
-            Cache:      autocert.DirCache("/etc/goinx/certs-cache"),
-            Prompt:     autocert.AcceptTOS,
-            HostPolicy: autocert.HostWhitelist(config.ServerName),
-        }
-        srv.TLSConfig = m.TLSConfig()
-
-        // Serveur HTTP sur port 80 pour challenge Let’s Encrypt
-        go func() {
-            httpSrv := &http.Server{
-                Addr:    ":80",
-                Handler: m.HTTPHandler(nil),
-            }
-            log.Printf("Serveur HTTP Let’s Encrypt démarré sur port 80 pour site %s", siteName)
-            if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-                log.Printf("Erreur serveur HTTP Let’s Encrypt %s : %v", siteName, err)
-            }
-        }()
-
-        go func() {
-            log.Printf("Serveur HTTPS avec Let’s Encrypt démarré sur port %s pour site %s", config.Listen, siteName)
-            if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-                log.Printf("Erreur HTTPS Let’s Encrypt site %s : %v", siteName, err)
-                activeServersMu.Lock()
-                if srvEntry, ok := activeServers[siteName]; ok {
-                    srvEntry.mu.Lock()
-                    srvEntry.running = false
-                    srvEntry.mu.Unlock()
-                }
-                activeServersMu.Unlock()
-            }
-        }()
-
-        activeServers[siteName] = &SiteServer{
-            Config:     config,
-            httpServer: srv,
-            running:    true,
-        }
-
-        return nil
-    }
-
-    return startClassicServer(siteName, config, srv, r)
+	return nil
 }
 
-func startClassicServer(siteName string, config SiteConfig, srv *http.Server, handler http.Handler) error {
-    if config.SSLEnabled {
-        if _, err := os.Stat(config.SSLCertFile); err != nil {
-            return fmt.Errorf("ssl_cert_file introuvable ou inaccessible: %v", err)
-        }
-        if _, err := os.Stat(config.SSLKeyFile); err != nil {
-            return fmt.Errorf("ssl_key_file introuvable ou inaccessible: %v", err)
-        }
+func setupLetsEncrypt(site *Site) {
+	host := site.Config.ServerName
+	certCacheDir := "/etc/goinx/certs-cache"
+	certFile := filepath.Join(certCacheDir, host)
 
-        if isSslOnPort80(config) {
-            httpsPort := "443"
-            httpPort := "80"
-            srv.Addr = ":" + httpsPort
+	hasCert := fileExists(certFile)
 
-            startRedirectHttpToHttps(httpPort, httpsPort, siteName)
+	if !domainPointsToServerIP(host) {
+		log.Printf("Le domaine %s ne pointe pas vers cette IP. Ignorer Let's Encrypt.", host)
+		return
+	}
 
-            go func() {
-                log.Printf("Serveur site %s démarré en HTTPS sur port %s\n", siteName, httpsPort)
-                if err := srv.ListenAndServeTLS(config.SSLCertFile, config.SSLKeyFile); err != nil && err != http.ErrServerClosed {
-                    log.Printf("Erreur HTTPS site %s : %v", siteName, err)
-                    activeServersMu.Lock()
-                    if srvEntry, ok := activeServers[siteName]; ok {
-                        srvEntry.mu.Lock()
-                        srvEntry.running = false
-                        srvEntry.mu.Unlock()
-                    }
-                    activeServersMu.Unlock()
-                }
-            }()
-        } else {
-            go func() {
-                log.Printf("Serveur site %s démarré en HTTPS sur port %s\n", siteName, config.Listen)
-                if err := srv.ListenAndServeTLS(config.SSLCertFile, config.SSLKeyFile); err != nil && err != http.ErrServerClosed {
-                    log.Printf("Erreur HTTPS site %s : %v", siteName, err)
-                    activeServersMu.Lock()
-                    if srvEntry, ok := activeServers[siteName]; ok {
-                        srvEntry.mu.Lock()
-                        srvEntry.running = false
-                        srvEntry.mu.Unlock()
-                    }
-                    activeServersMu.Unlock()
-                }
-            }()
-        }
-    } else {
-        go func() {
-            log.Printf("Serveur site %s démarré sur port %s\n", siteName, config.Listen)
-            if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-                log.Printf("Erreur HTTP site %s : %v", siteName, err)
-                activeServersMu.Lock()
-                if srvEntry, ok := activeServers[siteName]; ok {
-                    srvEntry.mu.Lock()
-                    srvEntry.running = false
-                    srvEntry.mu.Unlock()
-                }
-                activeServersMu.Unlock()
-            }
-        }()
-    }
+	if !hasCert {
+		log.Printf("Certificat Let's Encrypt pour %s absent, démarrage autocert", host)
+	} else {
+		log.Printf("Certificat Let's Encrypt pour %s trouvé en cache", host)
+	}
 
-    activeServers[siteName] = &SiteServer{
-        Config:     config,
-        httpServer: srv,
-        running:    true,
-    }
-
-    return nil
+	autocertMgrsMu.Lock()
+	m := &autocert.Manager{
+		Cache:      autocert.DirCache(certCacheDir),
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(host),
+	}
+	autocertMgrs[host] = m
+	autocertMgrsMu.Unlock()
 }
 
-func startRedirectHttpToHttps(httpPort, httpsPort, siteName string) {
-    go func() {
-        redirectSrv := &http.Server{
-            Addr: ":" + httpPort,
-            Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                target := "https://" + r.Host
-                if httpsPort != "443" {
-                    target += ":" + httpsPort
-                }
-                target += r.URL.RequestURI()
-                http.Redirect(w, r, target, http.StatusMovedPermanently)
-            }),
-        }
-        log.Printf("Redirection HTTP->HTTPS en marche sur port %s pour site %s\n", httpPort, siteName)
-        if err := redirectSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-            log.Printf("Erreur redirect HTTP->HTTPS pour site %s : %v", siteName, err)
-        }
-    }()
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+func getSiteByHost(host string) *Site {
+	sitesMu.Lock()
+	defer sitesMu.Unlock()
+	if site, exists := sites[host]; exists {
+		return site
+	}
+	if site, ok := sites["default"]; ok {
+		return site
+	}
+	return nil
+}
+
+func StartMainListener() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if strings.Contains(host, ":") {
+			host = strings.Split(host, ":")[0]
+		}
+
+		var site *Site
+		if host == "" || net.ParseIP(host) != nil {
+			site = getSiteByHost(host)
+		} else {
+			sitesMu.Lock()
+			site, _ = sites[host]
+			sitesMu.Unlock()
+		}
+
+		if site != nil {
+			if site.Config.UseLetsEncrypt {
+				target := "https://" + host + r.URL.RequestURI()
+				http.Redirect(w, r, target, http.StatusMovedPermanently)
+				return
+			}
+			site.Router.ServeHTTP(w, r)
+		} else {
+			http.NotFound(w, r)
+		}
+	})
+
+	finalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/acme-challenge/" || strings.HasPrefix(r.URL.Path, "/.well-known/acme-challenge/") {
+			host := r.Host
+			if strings.Contains(host, ":") {
+				host = strings.Split(host, ":")[0]
+			}
+			autocertMgrsMu.Lock()
+			m, ok := autocertMgrs[host]
+			autocertMgrsMu.Unlock()
+			if ok {
+				m.HTTPHandler(nil).ServeHTTP(w, r)
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
+
+	srv := &http.Server{
+		Addr:    ":80",
+		Handler: finalHandler,
+	}
+
+	log.Println("Serveur principal (multi-site) lancé sur port 80")
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("Serveur principal erreur: %v", err)
+	}
+}
+
+func LaunchHttpsServers() {
+	sitesMu.Lock()
+	defer sitesMu.Unlock()
+
+	for _, site := range sites {
+		cfg := site.Config
+		if cfg.UseLetsEncrypt {
+			autocertMgrsMu.Lock()
+			m, ok := autocertMgrs[cfg.ServerName]
+			autocertMgrsMu.Unlock()
+			if !ok {
+				log.Printf("Autocert manager pour %s introuvable, serveur TLS non démarré", cfg.ServerName)
+				continue
+			}
+			tlsSrv := &http.Server{
+				Addr:      ":443",
+				TLSConfig: m.TLSConfig(),
+				Handler:   site.Router,
+			}
+			go func(srv *http.Server, siteName string) {
+				log.Printf("Serveur TLS autocert démarré pour %s sur port 443", siteName)
+				if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+					log.Printf("Erreur TLS autocert %s : %v", siteName, err)
+				}
+			}(tlsSrv, cfg.ServerName)
+		} else if cfg.SSLEnabled {
+			if !fileExists(cfg.SSLCertFile) || !fileExists(cfg.SSLKeyFile) {
+				log.Printf("Certificat ou clé ssl introuvable pour site %s", cfg.ServerName)
+				continue
+			}
+			httpsSrv := &http.Server{
+				Addr:    ":" + cfg.Listen,
+				Handler: site.Router,
+			}
+			go func(srv *http.Server, siteName, certFile, keyFile string) {
+				log.Printf("Serveur HTTPS classique démarré pour %s sur port %s", siteName, cfg.Listen)
+				if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
+					log.Printf("Erreur HTTPS classique %s : %v", siteName, err)
+				}
+			}(httpsSrv, cfg.ServerName, cfg.SSLCertFile, cfg.SSLKeyFile)
+		}
+	}
 }
 
 func StopServer(siteName string) error {
-    activeServersMu.Lock()
-    siteSrv, exists := activeServers[siteName]
-    activeServersMu.Unlock()
-
-    if !exists || !siteSrv.running {
-        return fmt.Errorf("site %s serveur non démarré", siteName)
-    }
-
-    siteSrv.mu.Lock()
-    defer siteSrv.mu.Unlock()
-
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
-
-    err := siteSrv.httpServer.Shutdown(ctx)
-    if err != nil {
-        return err
-    }
-    siteSrv.running = false
-
-    activeServersMu.Lock()
-    delete(activeServers, siteName)
-    activeServersMu.Unlock()
-
-    log.Printf("Serveur site %s arrêté proprement\n", siteName)
-    return nil
+	activeServersMu.Lock()
+	siteSrv, exists := activeServers[siteName]
+	activeServersMu.Unlock()
+	if !exists || !siteSrv.running {
+		return nil
+	}
+	siteSrv.mu.Lock()
+	defer siteSrv.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := siteSrv.httpServer.Shutdown(ctx)
+	if err != nil {
+		return err
+	}
+	siteSrv.running = false
+	activeServersMu.Lock()
+	delete(activeServers, siteName)
+	activeServersMu.Unlock()
+	log.Printf("Serveur site %s arrêté proprement", siteName)
+	return nil
 }
 
 func IsServerRunning(siteName string) bool {
-    activeServersMu.Lock()
-    defer activeServersMu.Unlock()
-    s, ok := activeServers[siteName]
-    return ok && s.running
+	activeServersMu.Lock()
+	defer activeServersMu.Unlock()
+	s, ok := activeServers[siteName]
+	return ok && s.running
 }
