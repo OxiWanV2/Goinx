@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+	"github.com/OxiWanV2/Goinx/backend"
+	"github.com/OxiWanV2/Goinx/utils"
 )
 
 func stopAllServers() {
@@ -177,7 +180,7 @@ func handleList() {
 		}
 		enabledPath := filepath.Join(enabledDir, siteName)
 		state := "Désactivé"
-		if utils.LinkExists(enabledPath) {
+		if util.LinkExists(enabledPath) {
 			if IsServerRunning(siteName) {
 				state = "Activé (serveur en cours)"
 			} else {
