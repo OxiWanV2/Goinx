@@ -104,6 +104,58 @@
       font-family: monospace;
       color: #0f172a;
     }
+
+    .clock-container {
+      position: relative;
+      margin: 1.5rem auto;
+      width: 280px;
+      height: 100px;
+    }
+
+    .clock {
+      background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+      border-radius: 12px;
+      padding: 2.5rem 1rem 1rem;
+      font-size: 1.8rem;
+      color: #fff;
+      letter-spacing: 3px;
+      font-weight: 700;
+      box-shadow: 0 6px 15px rgba(37, 99, 235, 0.3);
+      user-select: none;
+      font-family: 'Courier New', monospace;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .date-box {
+      position: absolute;
+      top: 0.6rem;
+      left: 0.6rem;
+      background: rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(10px);
+      border-radius: 6px;
+      padding: 0.35rem 0.7rem;
+      font-size: 0.8rem;
+      color: #fff;
+      font-weight: 600;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      z-index: 10;
+      min-width: 100px;
+      text-align: center;
+    }
+
+    .clock.update {
+      animation: pulse 0.3s ease;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+      100% { transform: scale(1); }
+    }
   </style>
 </head>
 <body>
@@ -111,9 +163,15 @@
     <div class="card">
       <h1>{{ title }}</h1>
       <p>{{ description }}</p>
+
+      <div class="clock-container">
+        <div class="date-box">{{ currentDate }}</div>
+        <div class="clock" :class="{ update: isUpdating }">{{ currentTime }}</div>
+      </div>
+
       <p><strong>Fonctionnalités clés :</strong></p>
       <ul>
-        <li><svg class="lucide-icon" name="server" data-lucide="server"></svg>Serveur web Go performant avec proxy Node.js</li>
+        <li><svg class="lucide-icon" name="server" data-lucide="server"></svg>Serveur web Go performant avec prise en charge de backend Node.js</li>
         <li><svg class="lucide-icon" name="settings" data-lucide="settings"></svg>Gestion automatique de la configuration multi-sites</li>
         <li><svg class="lucide-icon" name="monitor" data-lucide="monitor"></svg>Intégration native de VueJS en mode SPA</li>
         <li><svg class="lucide-icon" name="shield-check" data-lucide="shield-check"></svg>Gestion SSL automatique avec Let's Encrypt</li>
@@ -124,21 +182,64 @@
     </div>
   </div>
 
-    <script>
+  <script>
     const { createApp } = Vue;
     createApp({
-        data() {
+      data() {
         return {
-            title: "Bienvenue sur Goinx 🚀",
-            description: "Un serveur web moderne alliant la puissance de Go, la flexibilité de Node.js et l’élégance de VueJS."
+          title: "Bienvenue sur Goinx 🚀",
+          description: "Un serveur web moderne alliant la puissance de Go, la flexibilité de Node.js et l'élégance de VueJS.",
+          currentTime: "--:--:--",
+          currentDate: "----/--/--",
+          isUpdating: false
         };
-        },
-        mounted() {
+      },
+      methods: {
+        async fetchCurrentTime() {
+          try {
+            const response = await fetch("/api/");
+            const text = await response.text();
+            
+            const match = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4}),\s*(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)/);
+            
+            if (match) {
+              const [_, month, day, year, hour, minute, second, period] = match;
+              
+              let hour24 = parseInt(hour);
+              if (period === 'PM' && hour24 !== 12) {
+                hour24 += 12;
+              } else if (period === 'AM' && hour24 === 12) {
+                hour24 = 0;
+              }
+              
+              const newDate = `${day.padStart(2, '0')}/${month.padStart(2, '0')}/${year}`;
+              const newTime = `${String(hour24).padStart(2, '0')}:${minute}:${second}`;
+              
+              if (this.currentDate !== newDate) {
+                this.currentDate = newDate;
+              }
+              
+              this.currentTime = newTime;
+            } else {
+              this.currentTime = text;
+            }
+            
+            this.isUpdating = true;
+            setTimeout(() => { this.isUpdating = false; }, 300);
+          } catch (error) {
+            this.currentTime = "Erreur API";
+            this.currentDate = "Erreur";
+          }
+        }
+      },
+      mounted() {
         if (window.lucide) {
-            window.lucide.createIcons();
+          window.lucide.createIcons();
         }
-        }
+        this.fetchCurrentTime();
+        setInterval(this.fetchCurrentTime, 1000);
+      }
     }).mount("#app");
-    </script>
+  </script>
 </body>
 </html>
