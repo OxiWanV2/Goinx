@@ -3,10 +3,11 @@ package config
 import (
     "fmt"
     "io"
+	"log"
     "os"
     "os/user"
+	"os/exec"
     "path/filepath"
-    "log"
 )
 
 func SetupGoinx() error {
