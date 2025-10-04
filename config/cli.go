@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"github.com/OxiWanV2/Goinx/backend"
 	"github.com/OxiWanV2/Goinx/utils"
@@ -52,7 +54,7 @@ func StartCLI() {
 	go StartMainListener()
 	go LaunchHttpsServers()
 
-	fmt.Println("Goinx CLI - Commandes: list, enable <site>, disable <site>, testconf <site>, reload, help, exit")
+	fmt.Println("Goinx CLI - Commandes: list, enable <site>, disable <site>, testconf <site>, reload, log <site>, help, exit")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -75,6 +77,7 @@ func StartCLI() {
 			fmt.Println("  disable <site>         - désactive un site (arrête serveur + backend, supprime lien)")
 			fmt.Println("  testconf <site>        - teste la config d’un site")
 			fmt.Println("  reload                 - recharge la configuration des sites et relance tous serveurs")
+			fmt.Println("  log <site>             - affiche les logs en temps réel du backend du site")
 			fmt.Println("  exit                   - quitte le CLI")
 
 		case "list":
@@ -149,6 +152,55 @@ func StartCLI() {
 				fmt.Printf("Erreur reload : %v\n", err)
 			} else {
 				fmt.Println("Reload terminé.")
+			}
+
+		case "log":
+			if len(args) < 2 {
+				fmt.Println("Usage : log <nom_site>")
+				continue
+			}
+			siteName := args[1]
+
+			enabledPath := filepath.Join("/etc/goinx/sites-enabled", siteName)
+			if !util.LinkExists(enabledPath) {
+				fmt.Printf("Site \"%s\" non trouvé ou non activé.\n", siteName)
+				continue
+			}
+
+			logChan, exists := backend.GetBackendLogChannel(siteName)
+			if !exists {
+				fmt.Printf("Aucun backend en cours ou pas de logs disponibles pour le site \"%s\".\n", siteName)
+
+				activeBackends := backend.GetActiveBackends()
+				if len(activeBackends) == 0 {
+					fmt.Println("Aucun backend actif actuellement.")
+				} else {
+					fmt.Println("Backends actifs :")
+					for _, s := range activeBackends {
+						fmt.Printf(" - %s\n", s)
+					}
+				}
+				continue
+			}
+
+			fmt.Printf("Affichage des logs en temps réel pour backend du site %s (Ctrl+C pour quitter)\n", siteName)
+
+			done := make(chan os.Signal, 1)
+			signal.Notify(done, os.Interrupt, syscall.SIGTERM)
+
+		loop:
+			for {
+				select {
+				case line, ok := <-logChan:
+					if !ok {
+						fmt.Println("Fin des logs.")
+						break loop
+					}
+					fmt.Println(line)
+				case <-done:
+					fmt.Println("\nInterruption reçue, arrêt affichage logs.")
+					break loop
+				}
 			}
 
 		case "exit":

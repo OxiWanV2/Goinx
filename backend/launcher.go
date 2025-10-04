@@ -4,7 +4,6 @@ import (
     "bufio"
     "fmt"
     "log"
-    "os"
     "os/exec"
     "path/filepath"
     "sync"
@@ -125,4 +124,16 @@ func GetBackendLogChannel(siteName string) (chan string, bool) {
     defer backendsMu.Unlock()
     ch, ok := backendsLogs[siteName]
     return ch, ok
+}
+
+func GetActiveBackends() []string {
+    backendsMu.Lock()
+    defer backendsMu.Unlock()
+    var activeSites []string
+    for siteName, bi := range backends {
+        if bi.Running {
+            activeSites = append(activeSites, siteName)
+        }
+    }
+    return activeSites
 }
