@@ -4,12 +4,16 @@ import (
     "context"
     "fmt"
     "log"
+    "net"
     "net/http"
     "os"
     "path/filepath"
     "strings"
     "sync"
+    "time"
+
     "github.com/gin-gonic/gin"
+    "golang.org/x/crypto/acme/autocert"
 )
 
 var (
@@ -23,6 +27,20 @@ type SiteServer struct {
     httpServer *http.Server
     running    bool
     mu         sync.Mutex
+}
+
+func dnsPointsToLocalIP(domain string) bool {
+    ips, err := net.LookupIP(domain)
+    if err != nil {
+        log.Printf("Échec résolution DNS %s : %v", domain, err)
+        return false
+    }
+    for _, ip := range ips {
+        if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() {
+            return true
+        }
+    }
+    return false
 }
 
 func isSslOnPort80(config SiteConfig) bool {
@@ -64,6 +82,60 @@ func StartServer(siteName string, config SiteConfig) error {
         Handler: r,
     }
 
+    // Gestion Let’s Encrypt
+    if config.UseLetsEncrypt {
+        if !dnsPointsToLocalIP(config.ServerName) {
+            log.Printf("Le domaine %s ne pointe pas vers cette IP. Ignorer Let’s Encrypt pour %s.", config.ServerName, siteName)
+            // Fallback au serveur classique (HTTP ou SSL classique)
+            return startClassicServer(siteName, config, srv, r)
+        }
+
+        m := &autocert.Manager{
+            Cache:      autocert.DirCache("/etc/goinx/certs-cache"),
+            Prompt:     autocert.AcceptTOS,
+            HostPolicy: autocert.HostWhitelist(config.ServerName),
+        }
+        srv.TLSConfig = m.TLSConfig()
+
+        // Serveur HTTP sur port 80 pour challenge Let’s Encrypt
+        go func() {
+            httpSrv := &http.Server{
+                Addr:    ":80",
+                Handler: m.HTTPHandler(nil),
+            }
+            log.Printf("Serveur HTTP Let’s Encrypt démarré sur port 80 pour site %s", siteName)
+            if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+                log.Printf("Erreur serveur HTTP Let’s Encrypt %s : %v", siteName, err)
+            }
+        }()
+
+        go func() {
+            log.Printf("Serveur HTTPS avec Let’s Encrypt démarré sur port %s pour site %s", config.Listen, siteName)
+            if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+                log.Printf("Erreur HTTPS Let’s Encrypt site %s : %v", siteName, err)
+                activeServersMu.Lock()
+                if srvEntry, ok := activeServers[siteName]; ok {
+                    srvEntry.mu.Lock()
+                    srvEntry.running = false
+                    srvEntry.mu.Unlock()
+                }
+                activeServersMu.Unlock()
+            }
+        }()
+
+        activeServers[siteName] = &SiteServer{
+            Config:     config,
+            httpServer: srv,
+            running:    true,
+        }
+
+        return nil
+    }
+
+    return startClassicServer(siteName, config, srv, r)
+}
+
+func startClassicServer(siteName string, config SiteConfig, srv *http.Server, handler http.Handler) error {
     if config.SSLEnabled {
         if _, err := os.Stat(config.SSLCertFile); err != nil {
             return fmt.Errorf("ssl_cert_file introuvable ou inaccessible: %v", err)
@@ -164,7 +236,7 @@ func StopServer(siteName string) error {
     siteSrv.mu.Lock()
     defer siteSrv.mu.Unlock()
 
-    ctx, cancel := context.WithTimeout(context.Background(), 5_000_000_000)
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
     err := siteSrv.httpServer.Shutdown(ctx)

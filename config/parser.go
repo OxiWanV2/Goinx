@@ -59,6 +59,11 @@ func ParseConf(path string) (SiteConfig, error) {
 			if len(parts) >= 2 {
 				config.SSLKeyFile = parts[1]
 			}
+		case "use_lets_encrypt":
+			if len(parts) >= 2 {
+				val := strings.ToLower(parts[1])
+				config.UseLetsEncrypt = (val == "true" || val == "1")
+			}
         }
     }
     if err := scanner.Err(); err != nil {
