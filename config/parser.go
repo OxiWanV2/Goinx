@@ -2,7 +2,6 @@ package config
 
 import (
     "bufio"
-    "fmt"
     "os"
     "strings"
 )
@@ -12,7 +11,7 @@ func ParseConf(path string) (SiteConfig, error) {
 
     file, err := os.Open(path)
     if err != nil {
-        return config, fmt.Errorf("impossible d’ouvrir %s : %v", path, err)
+        return config, err
     }
     defer file.Close()
 
@@ -43,6 +42,10 @@ func ParseConf(path string) (SiteConfig, error) {
             if len(parts) >= 3 {
                 config.VuejsRewrite.Path = parts[1]
                 config.VuejsRewrite.Fallback = parts[2]
+            }
+        case "error_pages_dir":
+            if len(parts) >= 2 {
+                config.ErrorPagesDir = parts[1]
             }
         }
     }
