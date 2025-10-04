@@ -3,6 +3,7 @@ package backend
 import (
 	"log"
 	"os"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -21,49 +22,54 @@ var (
 )
 
 func LaunchNodeBackend(siteName, backendDir, backendFile string) error {
-	fullPath := filepath.Join(backendDir, backendFile)
+    if backendFile == "" {
+        log.Printf("BackendFile vide pour site %s, impossible de lancer le backend", siteName)
+        return fmt.Errorf("backendFile vide pour site %s", siteName)
+    }
 
-	backendsMu.Lock()
-	if bi, exists := backends[siteName]; exists && bi.Running {
-		backendsMu.Unlock()
-		log.Printf("Backend déjà en cours pour site %s", siteName)
-		return nil
-	}
-	backendsMu.Unlock()
+    fullPath := filepath.Join(backendDir, backendFile)
 
-	cmd := exec.Command("node", fullPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+    backendsMu.Lock()
+    if bi, exists := backends[siteName]; exists && bi.Running {
+        backendsMu.Unlock()
+        log.Printf("Backend déjà en cours pour site %s", siteName)
+        return nil
+    }
+    backendsMu.Unlock()
 
-	if err := cmd.Start(); err != nil {
-		return err
-	}
+    cmd := exec.Command("node", fullPath)
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
 
-	bi := &BackendInstance{
-		SiteName: siteName,
-		Cmd:      cmd,
-		Running:  true,
-	}
+    if err := cmd.Start(); err != nil {
+        return err
+    }
 
-	backendsMu.Lock()
-	backends[siteName] = bi
-	backendsMu.Unlock()
+    bi := &BackendInstance{
+        SiteName: siteName,
+        Cmd:      cmd,
+        Running:  true,
+    }
 
-	go func() {
-		err := cmd.Wait()
-		backendsMu.Lock()
-		bi.Running = false
-		backendsMu.Unlock()
+    backendsMu.Lock()
+    backends[siteName] = bi
+    backendsMu.Unlock()
 
-		if err != nil {
-			log.Printf("Backend nodejs site %s fermé avec erreur : %v", siteName, err)
-		} else {
-			log.Printf("Backend nodejs site %s arrêté proprement", siteName)
-		}
-	}()
+    go func() {
+        err := cmd.Wait()
+        backendsMu.Lock()
+        bi.Running = false
+        backendsMu.Unlock()
 
-	log.Printf("Backend nodejs démarré pour site %s (%s)", siteName, fullPath)
-	return nil
+        if err != nil {
+            log.Printf("Backend nodejs site %s fermé avec erreur : %v", siteName, err)
+        } else {
+            log.Printf("Backend nodejs site %s arrêté proprement", siteName)
+        }
+    }()
+
+    log.Printf("Backend nodejs démarré pour site %s (%s)", siteName, fullPath)
+    return nil
 }
 
 func StopBackend(siteName string) error {

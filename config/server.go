@@ -9,6 +9,7 @@ import (
     "os"
     "path/filepath"
     "strings"
+	"strconv"
     "sync"
     "time"
     "github.com/gin-gonic/gin"
@@ -89,6 +90,18 @@ func InitSite(cfg SiteConfig) error {
 
     r.Static("/", cfg.Root)
 
+    if cfg.BackendRoute != "" && cfg.BackendInternalPort != 0 {
+        remoteURL := fmt.Sprintf("http://localhost:%d", cfg.BackendInternalPort)
+        remote, err := url.Parse(remoteURL)
+        if err == nil {
+            proxy := httputil.NewSingleHostReverseProxy(remote)
+            r.Any(cfg.BackendRoute+"/*proxyPath", func(c *gin.Context) {
+                c.Request.URL.Path = strings.TrimPrefix(c.Request.URL.Path, cfg.BackendRoute)
+                proxy.ServeHTTP(c.Writer, c.Request)
+            })
+        }
+    }
+
     if cfg.VuejsRewrite.Path != "" && cfg.VuejsRewrite.Fallback != "" {
         r.NoRoute(func(c *gin.Context) {
             if strings.HasPrefix(c.Request.URL.Path, cfg.VuejsRewrite.Path) {
@@ -120,7 +133,6 @@ func InitSite(cfg SiteConfig) error {
         setupLetsEncrypt(site)
     }
 
-    // Lancer backend si configuré
     if cfg.Backend != "" {
         parts := strings.SplitN(cfg.Backend, ":", 2)
         if len(parts) == 2 {

@@ -65,14 +65,21 @@
                     config.UseLetsEncrypt = (val == "true" || val == "1")
                 }
             case "backend":
-                if len(parts) >= 2 {
-                    config.Backend = parts[1]
+                if len(parts) >= 3 {
+                    config.BackendRoute = parts[1]
+                    config.Backend = parts[2]
                 }
             case "backend_file":
                 if len(parts) >= 2 {
                     config.BackendFile = parts[1]
                 }
-            }
+            case "backend_internal_port":
+                if len(parts) >= 2 {
+                    port, err := strconv.Atoi(parts[1])
+                    if err == nil {
+                        config.BackendInternalPort = port
+                    }
+                }
         }
         if err := scanner.Err(); err != nil {
             return config, err
