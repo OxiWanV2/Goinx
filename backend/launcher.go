@@ -1,24 +1,26 @@
 package backend
 
 import (
-	"log"
-	"os"
-	"fmt"
-	"os/exec"
-	"path/filepath"
-	"sync"
+    "bufio"
+    "fmt"
+    "log"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "sync"
 )
 
 type BackendInstance struct {
-	SiteName string
-	Cmd      *exec.Cmd
-	mu       sync.Mutex
-	Running  bool
+    SiteName string
+    Cmd      *exec.Cmd
+    mu       sync.Mutex
+    Running  bool
 }
 
 var (
-	backendsMu sync.Mutex
-	backends   = make(map[string]*BackendInstance)
+    backendsMu   sync.Mutex
+    backends     = make(map[string]*BackendInstance)
+    backendsLogs = make(map[string]chan string)
 )
 
 func LaunchNodeBackend(siteName, backendDir, backendFile string) error {
@@ -38,8 +40,33 @@ func LaunchNodeBackend(siteName, backendDir, backendFile string) error {
     backendsMu.Unlock()
 
     cmd := exec.Command("node", fullPath)
-    cmd.Stdout = os.Stdout
-    cmd.Stderr = os.Stderr
+
+    stdoutPipe, err := cmd.StdoutPipe()
+    if err != nil {
+        return err
+    }
+    stderrPipe, err := cmd.StderrPipe()
+    if err != nil {
+        return err
+    }
+
+    logChan := make(chan string, 100)
+    backendsMu.Lock()
+    backendsLogs[siteName] = logChan
+    backendsMu.Unlock()
+
+    go func() {
+        scannerOut := bufio.NewScanner(stdoutPipe)
+        for scannerOut.Scan() {
+            logChan <- scannerOut.Text()
+        }
+    }()
+    go func() {
+        scannerErr := bufio.NewScanner(stderrPipe)
+        for scannerErr.Scan() {
+            logChan <- scannerErr.Text()
+        }
+    }()
 
     if err := cmd.Start(); err != nil {
         return err
@@ -59,6 +86,8 @@ func LaunchNodeBackend(siteName, backendDir, backendFile string) error {
         err := cmd.Wait()
         backendsMu.Lock()
         bi.Running = false
+        close(logChan)
+        delete(backendsLogs, siteName)
         backendsMu.Unlock()
 
         if err != nil {
@@ -73,18 +102,27 @@ func LaunchNodeBackend(siteName, backendDir, backendFile string) error {
 }
 
 func StopBackend(siteName string) error {
-	backendsMu.Lock()
-	bi, exists := backends[siteName]
-	backendsMu.Unlock()
-	if !exists || !bi.Running {
-		return nil
-	}
-	if err := bi.Cmd.Process.Kill(); err != nil {
-		return err
-	}
-	backendsMu.Lock()
-	bi.Running = false
-	backendsMu.Unlock()
-	log.Printf("Backend site %s stoppé", siteName)
-	return nil
+    backendsMu.Lock()
+    bi, exists := backends[siteName]
+    backendsMu.Unlock()
+    if !exists || !bi.Running {
+        return nil
+    }
+    if err := bi.Cmd.Process.Kill(); err != nil {
+        return err
+    }
+    backendsMu.Lock()
+    bi.Running = false
+    close(backendsLogs[siteName])
+    delete(backendsLogs, siteName)
+    backendsMu.Unlock()
+    log.Printf("Backend site %s stoppé", siteName)
+    return nil
+}
+
+func GetBackendLogChannel(siteName string) (chan string, bool) {
+    backendsMu.Lock()
+    defer backendsMu.Unlock()
+    ch, ok := backendsLogs[siteName]
+    return ch, ok
 }

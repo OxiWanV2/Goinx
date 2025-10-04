@@ -3,13 +3,15 @@ package config
 import (
     "context"
     "crypto/tls"
+    "fmt"
     "log"
     "net"
     "net/http"
+    "net/http/httputil"
+    "net/url"
     "os"
     "path/filepath"
     "strings"
-	"strconv"
     "sync"
     "time"
     "github.com/gin-gonic/gin"
@@ -88,8 +90,6 @@ func InitSite(cfg SiteConfig) error {
     r := gin.New()
     r.Use(gin.Recovery())
 
-    r.Static("/", cfg.Root)
-
     if cfg.BackendRoute != "" && cfg.BackendInternalPort != 0 {
         remoteURL := fmt.Sprintf("http://localhost:%d", cfg.BackendInternalPort)
         remote, err := url.Parse(remoteURL)
@@ -99,8 +99,25 @@ func InitSite(cfg SiteConfig) error {
                 c.Request.URL.Path = strings.TrimPrefix(c.Request.URL.Path, cfg.BackendRoute)
                 proxy.ServeHTTP(c.Writer, c.Request)
             })
+            log.Printf("Reverse proxy configuré : %s -> %s pour site %s", cfg.BackendRoute, remoteURL, cfg.ServerName)
+        } else {
+            log.Printf("Erreur configuration proxy backend site %s : %v", cfg.ServerName, err)
         }
     }
+
+    r.Use(func(c *gin.Context) {
+        if cfg.BackendRoute != "" && strings.HasPrefix(c.Request.URL.Path, cfg.BackendRoute) {
+            c.Next()
+            return
+        }
+        file := filepath.Join(cfg.Root, c.Request.URL.Path)
+        if info, err := os.Stat(file); err == nil && !info.IsDir() {
+            c.File(file)
+            c.Abort()
+            return
+        }
+        c.Next()
+    })
 
     if cfg.VuejsRewrite.Path != "" && cfg.VuejsRewrite.Fallback != "" {
         r.NoRoute(func(c *gin.Context) {
