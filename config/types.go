@@ -5,6 +5,7 @@ type SiteConfig struct {
     Listen       string       // Port d’écoute (exemple "80")
     Root         string       // Chemin vers fichiers statiques
     VuejsRewrite VuejsRewrite // Config rewrite VueJS
+	ErrorPagesDir string // Directive pour les pages d'erreur custom
 }
 
 type VuejsRewrite struct {

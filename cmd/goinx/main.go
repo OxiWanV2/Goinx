@@ -4,8 +4,6 @@ import (
     "flag"
     "log"
     "github.com/OxiWanV2/Goinx/config"
-    "github.com/OxiWanV2/Goinx/util"
-    "github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -25,7 +23,7 @@ func main() {
         return
     }
 
-    sites, err := config.LoadSitesConfig()
+    sites, err := config.LoadSitesConfigWithNames()
     if err != nil {
         log.Fatalf("Erreur chargement configuration : %v", err)
     }
@@ -33,27 +31,23 @@ func main() {
         log.Fatal("Aucun site actif trouvé, arrêt.")
     }
 
-    err = config.ValidateConfigs(sites)
+    var configs []config.SiteConfig
+    for _, s := range sites {
+        configs = append(configs, s.Config)
+    }
+    err = config.ValidateConfigs(configs)
     if err != nil {
         log.Fatalf("Validation des configurations échouée : %v", err)
     }
 
-    log.Printf("Démarrage des sites (%d)...", len(sites))
+    log.Printf("Démarrage des %d sites activés...", len(sites))
 
-    firstSite := sites[0]
-    log.Printf("Lancement site %s sur port %s, racine %s", firstSite.ServerName, firstSite.Listen, firstSite.Root)
-
-    gin.SetMode(gin.ReleaseMode)
-    r := gin.Default()
-
-    r.Static("/", firstSite.Root)
-
-    r.NoRoute(func(c *gin.Context) {
-        c.File(firstSite.Root + "/" + firstSite.VuejsRewrite.Fallback)
-    })
-
-    err = r.Run(":" + firstSite.Listen)
-    if err != nil {
-        log.Fatalf("Erreur lancement serveur : %v", err)
+    for _, s := range sites {
+        err := config.StartServer(s.Name, s.Config)
+        if err != nil {
+            log.Printf("Erreur démarrage serveur site %s : %v", s.Name, err)
+        }
     }
+
+    select {}
 }

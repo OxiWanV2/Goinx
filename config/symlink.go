@@ -5,7 +5,7 @@ import (
     "os"
     "path/filepath"
 
-    "github.com/OxiWanV2/Goinx/util"
+    "github.com/OxiWanV2/Goinx/utils"
 )
 
 const (

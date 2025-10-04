@@ -6,15 +6,18 @@ import (
     "log"
     "os"
     "path/filepath"
-
-    "github.com/OxiWanV2/Goinx/util"
 )
 
-func LoadSitesConfig() ([]SiteConfig, error) {
+type SiteWithName struct {
+    Name   string
+    Config SiteConfig
+}
+
+func LoadSitesConfigWithNames() ([]SiteWithName, error) {
     enabledDir := "/etc/goinx/sites-enabled"
     availableDir := "/etc/goinx/sites-available"
 
-    var sites []SiteConfig
+    var sites []SiteWithName
 
     entries, err := os.ReadDir(enabledDir)
     if err != nil {
@@ -37,7 +40,7 @@ func LoadSitesConfig() ([]SiteConfig, error) {
         siteName := entry.Name()
         confPath := filepath.Join(availableDir, siteName, siteName+".conf")
 
-        if !util.Exists(confPath) {
+        if _, err := os.Stat(confPath); os.IsNotExist(err) {
             log.Printf("Config manquante %s pour site %s", confPath, siteName)
             continue
         }
@@ -53,7 +56,10 @@ func LoadSitesConfig() ([]SiteConfig, error) {
             continue
         }
 
-        sites = append(sites, conf)
+        sites = append(sites, SiteWithName{
+            Name:   siteName,
+            Config: conf,
+        })
         log.Printf("Chargée config site %s", siteName)
     }
 
