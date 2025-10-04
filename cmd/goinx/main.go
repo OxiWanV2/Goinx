@@ -2,13 +2,13 @@ package main
 
 import (
     "log"
-    "github.com/OxiWanV2/Goinx/setup"
+    "github.com/OxiWanV2/Goinx/config"
 )
 
 func main() {
     log.Println("Initialisation de Goinx...")
 
-    err := setup.SetupGoinx()
+    err := config.SetupGoinx()
     if err != nil {
         log.Fatalf("Erreur setup : %v", err)
     }
