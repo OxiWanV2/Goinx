@@ -1,11 +1,3 @@
-package config
-
-import (
-    "bufio"
-    "os"
-    "strings"
-)
-
 func ParseConf(path string) (SiteConfig, error) {
     var config SiteConfig
 
@@ -47,23 +39,31 @@ func ParseConf(path string) (SiteConfig, error) {
             if len(parts) >= 2 {
                 config.ErrorPagesDir = parts[1]
             }
-		case "ssl_enabled":
-			if len(parts) >= 2 {
-				config.SSLEnabled = (parts[1] == "true" || parts[1] == "1")
-			}
-		case "ssl_cert_file":
-			if len(parts) >= 2 {
-				config.SSLCertFile = parts[1]
-			}
-		case "ssl_key_file":
-			if len(parts) >= 2 {
-				config.SSLKeyFile = parts[1]
-			}
-		case "use_lets_encrypt":
-			if len(parts) >= 2 {
-				val := strings.ToLower(parts[1])
-				config.UseLetsEncrypt = (val == "true" || val == "1")
-			}
+        case "ssl_enabled":
+            if len(parts) >= 2 {
+                config.SSLEnabled = (parts[1] == "true" || parts[1] == "1")
+            }
+        case "ssl_cert_file":
+            if len(parts) >= 2 {
+                config.SSLCertFile = parts[1]
+            }
+        case "ssl_key_file":
+            if len(parts) >= 2 {
+                config.SSLKeyFile = parts[1]
+            }
+        case "use_lets_encrypt":
+            if len(parts) >= 2 {
+                val := strings.ToLower(parts[1])
+                config.UseLetsEncrypt = (val == "true" || val == "1")
+            }
+        case "backend":
+            if len(parts) >= 2 {
+                config.Backend = parts[1]
+            }
+        case "backend_file":
+            if len(parts) >= 2 {
+                config.BackendFile = parts[1]
+            }
         }
     }
     if err := scanner.Err(); err != nil {

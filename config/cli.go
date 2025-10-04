@@ -1,15 +1,13 @@
 package config
 
 import (
-    "bufio"
-    "context"
-    "fmt"
-    "log"
-    "os"
-    "path/filepath"
-    "strings"
-    "time"
-	"github.com/OxiWanV2/Goinx/utils"
+	"bufio"
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 func stopAllServers() {
@@ -70,13 +68,15 @@ func StartCLI() {
 		case "help":
 			fmt.Println("Commandes disponibles :")
 			fmt.Println("  list                   - liste les sites disponibles et leur état")
-			fmt.Println("  enable <site>          - active un site (crée lien, valide config, init site)")
-			fmt.Println("  disable <site>         - désactive un site (arrête serveur, supprime lien)")
+			fmt.Println("  enable <site>          - active un site (crée lien et initialise frontend+backend)")
+			fmt.Println("  disable <site>         - désactive un site (arrête serveur + backend, supprime lien)")
 			fmt.Println("  testconf <site>        - teste la config d’un site")
-			fmt.Println("  reload                 - recharge la configuration des sites")
+			fmt.Println("  reload                 - recharge la configuration des sites et relance tous serveurs")
 			fmt.Println("  exit                   - quitte le CLI")
+
 		case "list":
 			handleList()
+
 		case "enable":
 			if len(args) < 2 {
 				fmt.Println("Usage : enable <nom_site>")
@@ -84,24 +84,28 @@ func StartCLI() {
 			}
 			siteName := args[1]
 			if err := EnableSite(siteName); err != nil {
-				fmt.Println("Erreur :", err)
+				fmt.Println("Erreur activer site :", err)
 				continue
 			}
+
 			confPath := filepath.Join("/etc/goinx/sites-available", siteName, siteName+".conf")
 			conf, err := ParseConf(confPath)
 			if err != nil {
 				fmt.Println("Erreur lecture config :", err)
 				continue
 			}
+
 			if err := ValidateConfigs([]SiteConfig{conf}); err != nil {
 				fmt.Println("Config invalide :", err)
 				continue
 			}
+
 			if err := InitSite(conf); err != nil {
 				fmt.Println("Erreur initialisation site :", err)
 			} else {
 				fmt.Println("Site activé et initialisé :", siteName)
 			}
+
 		case "disable":
 			if len(args) < 2 {
 				fmt.Println("Usage : disable <nom_site>")
@@ -111,11 +115,17 @@ func StartCLI() {
 			if err := StopServer(siteName); err != nil {
 				fmt.Println("Erreur arrêt serveur :", err)
 			}
+
+			if err := backend.StopBackend(siteName); err != nil {
+				fmt.Println("Erreur arrêt backend :", err)
+			}
+
 			if err := DisableSite(siteName); err != nil {
 				fmt.Println("Erreur désactivation site :", err)
 			} else {
 				fmt.Println("Site désactivé et serveur arrêté :", siteName)
 			}
+
 		case "testconf":
 			if len(args) < 2 {
 				fmt.Println("Usage : testconf <nom_site>")
@@ -129,6 +139,7 @@ func StartCLI() {
 				continue
 			}
 			fmt.Printf("Config %s testée : %+v\n", siteName, conf)
+
 		case "reload":
 			err := ReloadServers()
 			if err != nil {
@@ -136,11 +147,14 @@ func StartCLI() {
 			} else {
 				fmt.Println("Reload terminé.")
 			}
+
 		case "exit":
 			fmt.Println("Sortie.")
+			stopAllServers()
 			return
+
 		default:
-			fmt.Println("Commande inconnue. Tapez 'help'.")
+			fmt.Println("Commande inconnue. Tapez 'help' pour la liste des commandes.")
 		}
 	}
 }
@@ -163,7 +177,7 @@ func handleList() {
 		}
 		enabledPath := filepath.Join(enabledDir, siteName)
 		state := "Désactivé"
-		if util.LinkExists(enabledPath) {
+		if utils.LinkExists(enabledPath) {
 			if IsServerRunning(siteName) {
 				state = "Activé (serveur en cours)"
 			} else {

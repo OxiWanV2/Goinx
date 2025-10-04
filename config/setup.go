@@ -3,11 +3,13 @@ package config
 import (
     "fmt"
     "io"
-	"log"
+    "log"
     "os"
     "os/user"
-	"os/exec"
+    "os/exec"
     "path/filepath"
+    "strings"
+    "github.com/OxiWanV2/Goinx/backend"
 )
 
 func SetupGoinx() error {
@@ -55,6 +57,25 @@ func SetupGoinx() error {
         log.Printf("Warning groupe '%s' : %v", groupe, err)
     }
 
+    sites, err := LoadSitesConfigWithNames()
+    if err != nil {
+        return fmt.Errorf("erreur chargement config sites pour setup backend : %v", err)
+    }
+
+    for _, site := range sites {
+        cfg := site.Config
+        if cfg.Backend != "" {
+            parts := strings.SplitN(cfg.Backend, ":", 2)
+            if len(parts) == 2 && strings.ToLower(parts[0]) == "nodejs" {
+                backendPath := parts[1]
+                log.Printf("Installation modules npm backend site %s dans %s", cfg.ServerName, backendPath)
+                if err := backend.SetupNodeModules(backendPath); err != nil {
+                    log.Printf("Erreur npm install backend site %s : %v", cfg.ServerName, err)
+                }
+            }
+        }
+    }
+
     return nil
 }
 
@@ -97,6 +118,7 @@ func copyFile(srcFile, destFile string) error {
     if err != nil {
         return err
     }
+
     return os.Chmod(destFile, info.Mode())
 }
 
