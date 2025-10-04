@@ -5,10 +5,10 @@ import (
     "fmt"
     "log"
     "net/http"
+    "os"
     "path/filepath"
     "strings"
     "sync"
-
     "github.com/gin-gonic/gin"
 )
 
@@ -54,22 +54,47 @@ func StartServer(siteName string, config SiteConfig) error {
         })
     }
 
-	if config.SSLEnabled {
-		if _, err := os.Stat(config.SSLCertFile); err != nil {
-			return fmt.Errorf("ssl_cert_file introuvable ou inaccessible: %v", err)
-		}
-		if _, err := os.Stat(config.SSLKeyFile); err != nil {
-			return fmt.Errorf("ssl_key_file introuvable ou inaccessible: %v", err)
-		}
-
-		err = srv.ListenAndServeTLS(config.SSLCertFile, config.SSLKeyFile)
-	} else {
-		err = srv.ListenAndServe()
-	}
-
     srv := &http.Server{
         Addr:    ":" + config.Listen,
         Handler: r,
+    }
+
+    var err error
+    if config.SSLEnabled {
+        if _, errCert := os.Stat(config.SSLCertFile); errCert != nil {
+            return fmt.Errorf("ssl_cert_file introuvable ou inaccessible: %v", errCert)
+        }
+        if _, errKey := os.Stat(config.SSLKeyFile); errKey != nil {
+            return fmt.Errorf("ssl_key_file introuvable ou inaccessible: %v", errKey)
+        }
+
+        go func() {
+            log.Printf("Serveur site %s démarré en HTTPS sur port %s\n", siteName, config.Listen)
+            if err := srv.ListenAndServeTLS(config.SSLCertFile, config.SSLKeyFile); err != nil && err != http.ErrServerClosed {
+                log.Printf("Serveur site %s erreur HTTPS : %v", siteName, err)
+                activeServersMu.Lock()
+                if srvEntry, ok := activeServers[siteName]; ok {
+                    srvEntry.mu.Lock()
+                    srvEntry.running = false
+                    srvEntry.mu.Unlock()
+                }
+                activeServersMu.Unlock()
+            }
+        }()
+    } else {
+        go func() {
+            log.Printf("Serveur site %s démarré sur port %s\n", siteName, config.Listen)
+            if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+                log.Printf("Serveur site %s erreur HTTP : %v", siteName, err)
+                activeServersMu.Lock()
+                if srvEntry, ok := activeServers[siteName]; ok {
+                    srvEntry.mu.Lock()
+                    srvEntry.running = false
+                    srvEntry.mu.Unlock()
+                }
+                activeServersMu.Unlock()
+            }
+        }()
     }
 
     siteSrv := &SiteServer{
@@ -79,17 +104,7 @@ func StartServer(siteName string, config SiteConfig) error {
     }
     activeServers[siteName] = siteSrv
 
-    go func() {
-        log.Printf("Serveur site %s démarré sur port %s\n", siteName, config.Listen)
-        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-            log.Printf("Serveur site %s erreur : %v", siteName, err)
-            siteSrv.mu.Lock()
-            siteSrv.running = false
-            siteSrv.mu.Unlock()
-        }
-    }()
-
-    return nil
+    return err
 }
 
 func StopServer(siteName string) error {
