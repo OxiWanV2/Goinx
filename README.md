@@ -142,4 +142,5 @@ MIT
 ***
 
 T’as une question, un bug, un besoin, dis-moi.  
-Goinx, c’est fait pour faciliter la vie !
+
+Goinx, c’est fait pour faciliter la vie ! 

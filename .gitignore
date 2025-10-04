@@ -3,3 +3,4 @@
 .output/
 *.app
 commit.sh
+.goinx
