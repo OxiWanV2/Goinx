@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Goinx - Serveur VueJS & Node.js</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.544.0/dist/umd/lucide.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: "Inter", Arial, sans-serif;
+      background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);
+      color: #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      max-width: 700px;
+      width: 100%;
+      padding: 2.5rem;
+      text-align: center;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.1);
+    }
+
+    h1 {
+      color: #2563eb;
+      font-size: 2rem;
+      margin-bottom: 1rem;
+    }
+
+    p {
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+      line-height: 1.6;
+    }
+
+    ul {
+      list-style: none;
+      text-align: left;
+      margin: 1.5rem auto;
+      max-width: 400px;
+      padding: 0;
+    }
+
+    li {
+      background: #f1f5f9;
+      border-radius: 8px;
+      padding: 0.7rem 1rem;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      transition: background 0.2s ease;
+      font-weight: 500;
+    }
+
+    li:hover {
+      background: #e2e8f0;
+    }
+
+    li svg, li .lucide-icon {
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      margin-right: 0.75rem;
+      stroke: #2563eb;
+    }
+
+    strong {
+      color: #0f172a;
+    }
+
+    .footer {
+      margin-top: 2rem;
+      font-size: 0.95rem;
+      color: #475569;
+    }
+
+    .footer span {
+      color: #ef4444;
+    }
+
+    code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      color: #0f172a;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="card">
+      <h1>{{ title }}</h1>
+      <p>{{ description }}</p>
+      <p><strong>Fonctionnalités clés :</strong></p>
+      <ul>
+        <li><svg class="lucide-icon" name="server" data-lucide="server"></svg>Serveur web Go performant avec proxy Node.js</li>
+        <li><svg class="lucide-icon" name="settings" data-lucide="settings"></svg>Gestion automatique de la configuration multi-sites</li>
+        <li><svg class="lucide-icon" name="monitor" data-lucide="monitor"></svg>Intégration native de VueJS en mode SPA</li>
+        <li><svg class="lucide-icon" name="shield-check" data-lucide="shield-check"></svg>Gestion SSL automatique avec Let's Encrypt</li>
+      </ul>
+      <p class="footer">
+        Développé avec <span>❤️</span> par <strong>OxiWan</strong> pour les développeurs <code>VueJS</code> & <code>Node.js</code>
+      </p>
+    </div>
+  </div>
+
+    <script>
+    const { createApp } = Vue;
+    createApp({
+        data() {
+        return {
+            title: "Bienvenue sur Goinx 🚀",
+            description: "Un serveur web moderne alliant la puissance de Go, la flexibilité de Node.js et l’élégance de VueJS."
+        };
+        },
+        mounted() {
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+        }
+    }).mount("#app");
+    </script>
+</body>
+</html>
