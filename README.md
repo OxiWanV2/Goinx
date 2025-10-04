@@ -1,6 +1,6 @@
 # Goinx
 
-Goinx est un gestionnaire multi-sites orienter VueJS léger et flexible, développé en Go, avec prise en charge complète des sites HTTP et HTTPS, intégration automatique de certificats SSL Let’s Encrypt, et gestion facile via CLI.
+Goinx est un gestionnaire multi-sites orienter VueJS léger et flexible, développé en Go, avec prise en charge complète des sites HTTP et HTTPS, intégration automatique de certificats SSL Let’s
 
 ***
 
@@ -31,15 +31,22 @@ Goinx est fait pour toi.
 
 ## Installation rapide
 
-1. Clone ce repo  
-2. Place tes configs dans `/etc/goinx/sites-available/`, crée des liens dans `/etc/goinx/sites-enabled/` pour activer  
-3. Lance le serveur en mode CLI pour tester :  
-```bash
-go run cmd/goinx/main.go -cli
-```
-4. Utilise les commandes `enable`, `disable`, `reload`, etc.  
-5. Mets `UseLetsEncrypt=true` dans la config pour générer les certificats automatiquement, ou renseigne tes fichiers de certifs manuels.  
-6. En prod, lance le binaire directement sans le flag cli.
+1. Télécharge le binaire `goinx` depuis la [dernière release](https://github.com/OxiWanV2/Goinx/releases).
+2. Rends-le exécutable :
+   ```bash
+   chmod +x goinx
+   ```
+3. Lance-le avec les droits root :
+   ```bash
+   sudo ./goinx
+   ```
+5. Pour tester en mode CLI :
+   ```bash
+   go run cmd/goinx/main.go -cli
+   ```
+6. Utilise les commandes `enable`, `disable`, `reload`, etc.  
+7. Mets `use_lets_encrypt true` dans la config pour générer les certificats automatiquement, ou renseigne tes fichiers de certifs manuels.  
+8. En prod, lance le binaire directement sans le flag cli.
 
 ***
 
