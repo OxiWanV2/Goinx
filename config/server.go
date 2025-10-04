@@ -25,6 +25,10 @@ type SiteServer struct {
     mu         sync.Mutex
 }
 
+func isSslOnPort80(config SiteConfig) bool {
+    return config.SSLEnabled && config.Listen == "80"
+}
+
 func StartServer(siteName string, config SiteConfig) error {
     activeServersMu.Lock()
     defer activeServersMu.Unlock()
@@ -54,38 +58,60 @@ func StartServer(siteName string, config SiteConfig) error {
         })
     }
 
+    listenPort := config.Listen
     srv := &http.Server{
-        Addr:    ":" + config.Listen,
+        Addr:    ":" + listenPort,
         Handler: r,
     }
 
-    var err error
     if config.SSLEnabled {
-        if _, errCert := os.Stat(config.SSLCertFile); errCert != nil {
-            return fmt.Errorf("ssl_cert_file introuvable ou inaccessible: %v", errCert)
+        if _, err := os.Stat(config.SSLCertFile); err != nil {
+            return fmt.Errorf("ssl_cert_file introuvable ou inaccessible: %v", err)
         }
-        if _, errKey := os.Stat(config.SSLKeyFile); errKey != nil {
-            return fmt.Errorf("ssl_key_file introuvable ou inaccessible: %v", errKey)
+        if _, err := os.Stat(config.SSLKeyFile); err != nil {
+            return fmt.Errorf("ssl_key_file introuvable ou inaccessible: %v", err)
         }
 
-        go func() {
-            log.Printf("Serveur site %s démarré en HTTPS sur port %s\n", siteName, config.Listen)
-            if err := srv.ListenAndServeTLS(config.SSLCertFile, config.SSLKeyFile); err != nil && err != http.ErrServerClosed {
-                log.Printf("Serveur site %s erreur HTTPS : %v", siteName, err)
-                activeServersMu.Lock()
-                if srvEntry, ok := activeServers[siteName]; ok {
-                    srvEntry.mu.Lock()
-                    srvEntry.running = false
-                    srvEntry.mu.Unlock()
+        if isSslOnPort80(config) {
+            httpsPort := "443"
+            httpPort := "80"
+            srv.Addr = ":" + httpsPort
+
+            startRedirectHttpToHttps(httpPort, httpsPort, siteName)
+
+            go func() {
+                log.Printf("Serveur site %s démarré en HTTPS sur port %s\n", siteName, httpsPort)
+                if err := srv.ListenAndServeTLS(config.SSLCertFile, config.SSLKeyFile); err != nil && err != http.ErrServerClosed {
+                    log.Printf("Erreur HTTPS site %s : %v", siteName, err)
+                    activeServersMu.Lock()
+                    if srvEntry, ok := activeServers[siteName]; ok {
+                        srvEntry.mu.Lock()
+                        srvEntry.running = false
+                        srvEntry.mu.Unlock()
+                    }
+                    activeServersMu.Unlock()
                 }
-                activeServersMu.Unlock()
-            }
-        }()
+            }()
+        } else {
+            go func() {
+                log.Printf("Serveur site %s démarré en HTTPS sur port %s\n", siteName, config.Listen)
+                if err := srv.ListenAndServeTLS(config.SSLCertFile, config.SSLKeyFile); err != nil && err != http.ErrServerClosed {
+                    log.Printf("Erreur HTTPS site %s : %v", siteName, err)
+                    activeServersMu.Lock()
+                    if srvEntry, ok := activeServers[siteName]; ok {
+                        srvEntry.mu.Lock()
+                        srvEntry.running = false
+                        srvEntry.mu.Unlock()
+                    }
+                    activeServersMu.Unlock()
+                }
+            }()
+        }
     } else {
         go func() {
             log.Printf("Serveur site %s démarré sur port %s\n", siteName, config.Listen)
             if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-                log.Printf("Serveur site %s erreur HTTP : %v", siteName, err)
+                log.Printf("Erreur HTTP site %s : %v", siteName, err)
                 activeServersMu.Lock()
                 if srvEntry, ok := activeServers[siteName]; ok {
                     srvEntry.mu.Lock()
@@ -97,20 +123,40 @@ func StartServer(siteName string, config SiteConfig) error {
         }()
     }
 
-    siteSrv := &SiteServer{
+    activeServers[siteName] = &SiteServer{
         Config:     config,
         httpServer: srv,
         running:    true,
     }
-    activeServers[siteName] = siteSrv
 
-    return err
+    return nil
+}
+
+func startRedirectHttpToHttps(httpPort, httpsPort, siteName string) {
+    go func() {
+        redirectSrv := &http.Server{
+            Addr: ":" + httpPort,
+            Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+                target := "https://" + r.Host
+                if httpsPort != "443" {
+                    target += ":" + httpsPort
+                }
+                target += r.URL.RequestURI()
+                http.Redirect(w, r, target, http.StatusMovedPermanently)
+            }),
+        }
+        log.Printf("Redirection HTTP->HTTPS en marche sur port %s pour site %s\n", httpPort, siteName)
+        if err := redirectSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            log.Printf("Erreur redirect HTTP->HTTPS pour site %s : %v", siteName, err)
+        }
+    }()
 }
 
 func StopServer(siteName string) error {
     activeServersMu.Lock()
     siteSrv, exists := activeServers[siteName]
     activeServersMu.Unlock()
+
     if !exists || !siteSrv.running {
         return fmt.Errorf("site %s serveur non démarré", siteName)
     }
