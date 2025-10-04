@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
 	"net"
 	"net/http"
@@ -10,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -30,12 +30,14 @@ type Site struct {
 }
 
 var (
-	sitesMu        sync.Mutex
-	sites          = make(map[string]*Site)
-	autocertMgrsMu sync.Mutex
-	autocertMgrs   = make(map[string]*autocert.Manager)
+	sitesMu         sync.Mutex
+	sites           = make(map[string]*Site)
+	autocertMgrsMu  sync.Mutex
+	autocertMgrs    = make(map[string]*autocert.Manager)
 	activeServersMu sync.Mutex
 	activeServers   = make(map[string]*SiteServer)
+	httpsServerMu   sync.Mutex
+	httpsServer     *http.Server
 )
 
 func domainPointsToServerIP(domain string) bool {
@@ -45,14 +47,14 @@ func domainPointsToServerIP(domain string) bool {
 		return false
 	}
 
-	localIPs := make(map[string]bool)
+	localIPs := map[string]bool{}
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		log.Printf("Erreur récupération interfaces réseau: %v", err)
 		return false
 	}
-	for _, i := range ifaces {
-		addrs, err := i.Addrs()
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
 		}
@@ -122,17 +124,9 @@ func setupLetsEncrypt(site *Site) {
 	certCacheDir := "/etc/goinx/certs-cache"
 	certFile := filepath.Join(certCacheDir, host)
 
-	hasCert := fileExists(certFile)
-
 	if !domainPointsToServerIP(host) {
 		log.Printf("Le domaine %s ne pointe pas vers cette IP. Ignorer Let's Encrypt.", host)
 		return
-	}
-
-	if !hasCert {
-		log.Printf("Certificat Let's Encrypt pour %s absent, démarrage autocert", host)
-	} else {
-		log.Printf("Certificat Let's Encrypt pour %s trouvé en cache", host)
 	}
 
 	autocertMgrsMu.Lock()
@@ -143,6 +137,12 @@ func setupLetsEncrypt(site *Site) {
 	}
 	autocertMgrs[host] = m
 	autocertMgrsMu.Unlock()
+
+	if fileExists(certFile) {
+		log.Printf("Certificat Let's Encrypt pour %s trouvé en cache", host)
+	} else {
+		log.Printf("Certificat Let's Encrypt pour %s absent, sera généré automatiquement par autocert", host)
+	}
 }
 
 func fileExists(path string) bool {
@@ -162,6 +162,50 @@ func getSiteByHost(host string) *Site {
 	if site, ok := sites["default"]; ok {
 		return site
 	}
+	return nil
+}
+
+func ReloadServers() error {
+	log.Println("Reload des serveurs en cours...")
+
+	sitesConfig, err := LoadSitesConfigWithNames()
+	if err != nil {
+		return err
+	}
+
+	httpsServerMu.Lock()
+	if httpsServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := httpsServer.Shutdown(ctx)
+		cancel()
+		if err != nil {
+			log.Printf("Erreur arrêt serveur HTTPS : %v", err)
+		} else {
+			log.Println("Serveur HTTPS arrêté")
+		}
+		httpsServer = nil
+	}
+	httpsServerMu.Unlock()
+
+	sitesMu.Lock()
+	sites = make(map[string]*Site)
+	sitesMu.Unlock()
+
+	autocertMgrsMu.Lock()
+	autocertMgrs = make(map[string]*autocert.Manager)
+	autocertMgrsMu.Unlock()
+
+	for _, site := range sitesConfig {
+		err := InitSite(site.Config)
+		if err != nil {
+			log.Printf("Erreur initialisation site %s : %v", site.Name, err)
+			continue
+		}
+		log.Printf("Site %s initialisé.", site.Name)
+	}
+
+	go LaunchHttpsServers()
+
 	return nil
 }
 
@@ -224,46 +268,74 @@ func StartMainListener() {
 
 func LaunchHttpsServers() {
 	sitesMu.Lock()
-	defer sitesMu.Unlock()
-
+	hosts := []string{}
 	for _, site := range sites {
-		cfg := site.Config
-		if cfg.UseLetsEncrypt {
-			autocertMgrsMu.Lock()
-			m, ok := autocertMgrs[cfg.ServerName]
-			autocertMgrsMu.Unlock()
-			if !ok {
-				log.Printf("Autocert manager pour %s introuvable, serveur TLS non démarré", cfg.ServerName)
-				continue
-			}
-			tlsSrv := &http.Server{
-				Addr:      ":443",
-				TLSConfig: m.TLSConfig(),
-				Handler:   site.Router,
-			}
-			go func(srv *http.Server, siteName string) {
-				log.Printf("Serveur TLS autocert démarré pour %s sur port 443", siteName)
-				if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-					log.Printf("Erreur TLS autocert %s : %v", siteName, err)
-				}
-			}(tlsSrv, cfg.ServerName)
-		} else if cfg.SSLEnabled {
-			if !fileExists(cfg.SSLCertFile) || !fileExists(cfg.SSLKeyFile) {
-				log.Printf("Certificat ou clé ssl introuvable pour site %s", cfg.ServerName)
-				continue
-			}
-			httpsSrv := &http.Server{
-				Addr:    ":" + cfg.Listen,
-				Handler: site.Router,
-			}
-			go func(srv *http.Server, siteName, certFile, keyFile string) {
-				log.Printf("Serveur HTTPS classique démarré pour %s sur port %s", siteName, cfg.Listen)
-				if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
-					log.Printf("Erreur HTTPS classique %s : %v", siteName, err)
-				}
-			}(httpsSrv, cfg.ServerName, cfg.SSLCertFile, cfg.SSLKeyFile)
+		if site.Config.UseLetsEncrypt {
+			hosts = append(hosts, site.Config.ServerName)
 		}
 	}
+	sitesMu.Unlock()
+
+	if len(hosts) == 0 {
+		log.Println("Aucun site Let's Encrypt actif, serveur HTTPS non démarré")
+		return
+	}
+
+	httpsServerMu.Lock()
+	defer httpsServerMu.Unlock()
+
+	if httpsServer != nil {
+		log.Println("Serveur HTTPS déjà actif, skip lancement")
+		return
+	}
+
+	certCacheDir := "/etc/goinx/certs-cache"
+	m := &autocert.Manager{
+		Cache:      autocert.DirCache(certCacheDir),
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(hosts...),
+	}
+
+	tlsConfig := &tls.Config{
+		GetCertificate: m.GetCertificate,
+		NextProtos:     []string{"h2", "http/1.1", "acme-tls/1"},
+	}
+
+	autocertMgrsMu.Lock()
+	for _, host := range hosts {
+		autocertMgrs[host] = m
+	}
+	autocertMgrsMu.Unlock()
+
+	httpsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if strings.Contains(host, ":") {
+			host = strings.Split(host, ":")[0]
+		}
+
+		sitesMu.Lock()
+		site, exists := sites[host]
+		sitesMu.Unlock()
+
+		if exists {
+			site.Router.ServeHTTP(w, r)
+		} else {
+			http.NotFound(w, r)
+		}
+	})
+
+	httpsServer = &http.Server{
+		Addr:      ":443",
+		TLSConfig: tlsConfig,
+		Handler:   httpsHandler,
+	}
+
+	go func() {
+		log.Println("Serveur HTTPS unique lancé sur port 443")
+		if err := httpsServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			log.Printf("Erreur serveur HTTPS : %v", err)
+		}
+	}()
 }
 
 func StopServer(siteName string) error {

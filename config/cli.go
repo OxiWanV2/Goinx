@@ -1,50 +1,37 @@
 package config
 
 import (
-	"bufio"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
+    "bufio"
+    "context"
+    "fmt"
+    "log"
+    "os"
+    "path/filepath"
+    "strings"
+    "time"
 	"github.com/OxiWanV2/Goinx/utils"
 )
 
-func reloadSites() {
-	fmt.Println("Reload des sites activés...")
+func stopAllServers() {
+	activeServersMu.Lock()
+	defer activeServersMu.Unlock()
 
-	sitesConfig, err := LoadSitesConfigWithNames()
-	if err != nil {
-		fmt.Printf("Erreur chargement des sites activés : %v\n", err)
-		return
+	for name, srv := range activeServers {
+		srv.mu.Lock()
+		if srv.running {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := srv.httpServer.Shutdown(ctx)
+			cancel()
+			if err != nil {
+				log.Printf("Erreur arrêt serveur %s : %v", name, err)
+			} else {
+				srv.running = false
+				log.Printf("Serveur %s arrêté", name)
+			}
+		}
+		srv.mu.Unlock()
 	}
-
-	for _, s := range sitesConfig {
-		conf := s.Config
-
-		err := ValidateConfigs([]SiteConfig{conf})
-		if err != nil {
-			fmt.Printf("Config invalide %s : %v\n", s.Name, err)
-			continue
-		}
-
-		sitesMu.Lock()
-		site, exists := sites[conf.ServerName]
-		sitesMu.Unlock()
-
-		if exists {
-			site.Mutex.Lock()
-			site.Router = nil
-			site.Mutex.Unlock()
-		}
-
-		err = InitSite(conf)
-		if err != nil {
-			fmt.Printf("Erreur reload site %s : %v\n", s.Name, err)
-			continue
-		}
-
-		fmt.Printf("Site %s reloadé avec succès.\n", s.Name)
-	}
+	activeServers = make(map[string]*SiteServer)
 }
 
 func StartCLI() {
@@ -55,8 +42,7 @@ func StartCLI() {
 	}
 
 	for _, s := range sitesConfig {
-		err := InitSite(s.Config)
-		if err != nil {
+		if err := InitSite(s.Config); err != nil {
 			fmt.Printf("Erreur initialisation site %s : %v\n", s.Name, err)
 			return
 		}
@@ -97,8 +83,7 @@ func StartCLI() {
 				continue
 			}
 			siteName := args[1]
-			err := EnableSite(siteName)
-			if err != nil {
+			if err := EnableSite(siteName); err != nil {
 				fmt.Println("Erreur :", err)
 				continue
 			}
@@ -112,8 +97,7 @@ func StartCLI() {
 				fmt.Println("Config invalide :", err)
 				continue
 			}
-			err = InitSite(conf)
-			if err != nil {
+			if err := InitSite(conf); err != nil {
 				fmt.Println("Erreur initialisation site :", err)
 			} else {
 				fmt.Println("Site activé et initialisé :", siteName)
@@ -124,13 +108,10 @@ func StartCLI() {
 				continue
 			}
 			siteName := args[1]
-			err := StopServer(siteName)
-			if err != nil {
+			if err := StopServer(siteName); err != nil {
 				fmt.Println("Erreur arrêt serveur :", err)
-				continue
 			}
-			err = DisableSite(siteName)
-			if err != nil {
+			if err := DisableSite(siteName); err != nil {
 				fmt.Println("Erreur désactivation site :", err)
 			} else {
 				fmt.Println("Site désactivé et serveur arrêté :", siteName)
@@ -149,7 +130,12 @@ func StartCLI() {
 			}
 			fmt.Printf("Config %s testée : %+v\n", siteName, conf)
 		case "reload":
-			reloadSites()
+			err := ReloadServers()
+			if err != nil {
+				fmt.Printf("Erreur reload : %v\n", err)
+			} else {
+				fmt.Println("Reload terminé.")
+			}
 		case "exit":
 			fmt.Println("Sortie.")
 			return
