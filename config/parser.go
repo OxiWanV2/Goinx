@@ -68,7 +68,7 @@
                 if len(parts) >= 2 {
                     config.Backend = parts[1]
                 }
-            case "backendfile":
+            case "backend_file":
                 if len(parts) >= 2 {
                     config.BackendFile = parts[1]
                 }
