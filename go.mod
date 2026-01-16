@@ -1,6 +1,6 @@
 module github.com/OxiWanV2/Goinx
 
-go 1.24.6
+go 1.20
 
 require (
 	github.com/bytedance/sonic v1.14.0 // indirect
