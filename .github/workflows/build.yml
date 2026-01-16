@@ -16,7 +16,7 @@ jobs:
 
     - name: Build Goinx
       run: |
-        go build -v -o goinx
+        go build -v -o goinx ./cmd/goinx
 
     - name: Get latest release
       id: get_release
