@@ -39,6 +39,7 @@ func LaunchNodeBackend(siteName, backendDir, backendFile string) error {
     backendsMu.Unlock()
 
     cmd := exec.Command("node", fullPath)
+    cmd.Dir = backendDir
 
     stdoutPipe, err := cmd.StdoutPipe()
     if err != nil {
